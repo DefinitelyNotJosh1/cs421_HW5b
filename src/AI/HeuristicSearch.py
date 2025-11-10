@@ -1,10 +1,14 @@
-# Heuristic Search AI, HW 2B CS-421
+# Neural Network AI, HW 5b, CS-421
 # Authors:
-# - Christopher Yee
+# - Trenton Pham
 # - Joshua Krasnogorov
+
+# The goal of this assignment is to build a neural network that copies the Utility function we have now
+
 
 import random
 import sys
+import numpy as np
 
 sys.path.append("..")  #so other modules can be found in parent dir
 from Player import *
@@ -14,6 +18,142 @@ from Ant import UNIT_STATS
 from Move import Move
 from GameState import *
 from AIPlayerUtils import *
+
+
+# Define it as a class - will make the implementation in ReANTICS way easier if we do it this way
+# Josh:Took inspiration from my own implementation of an ANN in ML class, but simplified it for this assignment
+class ANN:
+    def __init__(self, input_size, hidden_size, output_size, alpha, batch_size, stop_threshold):
+        # Initialize weights and biases
+        self.w1 = np.random.rand(input_size, hidden_size) * 2 - 1 # -1 to 1
+        self.b1 = np.random.rand(1, hidden_size) * 2 - 1
+
+        self.w2 = np.random.rand(hidden_size, output_size) * 2 - 1 
+        self.b2 = np.random.rand(1, output_size) * 2 - 1 
+
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+        self.alpha = alpha
+        self.batch_size = batch_size
+        self.accuracy_per_epoch = []
+        self.error_per_epoch = [1]
+        self.stop_threshold = stop_threshold
+
+    # Sigmoid activation function
+    def sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    # Sigmoid derivative
+    def sigmoid_derivative(self, x):
+        return x * (1 - x)
+
+    ##
+    # forward
+    #
+    # Description: Propogates the input forward through the network.
+    #
+    # Parameters:
+    #   input - the input to the network
+    # 
+    # Return: The output of the network after passing through the network.
+    ##
+    def forward(self, input):
+        # Ensure 2D input for consistent matrix operations
+        if isinstance(input, np.ndarray) and input.ndim == 1:
+            input = input.reshape(1, -1)
+        
+        # Hidden layer
+        self.z1 = np.dot(input, self.w1) + self.b1
+        self.a1 = self.sigmoid(self.z1)
+
+        # Output layer
+        self.z2 = np.dot(self.a1, self.w2) + self.b2
+        self.a2 = self.sigmoid(self.z2)
+
+        return self.a2
+
+    ##
+    # backward
+    #
+    # Description: Propogates the error backward through the network.
+    #
+    # Parameters:
+    #   x_input - the input to the network
+    #   y_output - the desired output of the network
+    #
+    # Return: Nothing, updates weights and biases in itself.
+    ##
+    def backward(self, x_input, y_output):
+        # Ensure 2D input for consistent matrix operations
+        if isinstance(x_input, np.ndarray) and x_input.ndim == 1:
+            x_input = x_input.reshape(1, -1)
+        if isinstance(y_output, np.ndarray) and y_output.ndim == 1:
+            y_output = y_output.reshape(1, -1)
+
+        # Note: 
+        #   I divide by n to get the average gradient across the batch to make learning rate independent of batch size.
+        n = x_input.shape[0]
+        
+        # Output layer error
+        # Note: 
+        #   for this assignment, omitting the sigmoid derivative makes convergence ~10x faster.
+        #   I didn't have it in my original ML assignment, but I'll add it here for this assignment.
+        error_output = (y_output - self.a2) * self.sigmoid_derivative(self.a2)
+
+        # Calculate weights and biases for output layer
+        dw2 = np.dot(self.a1.T, error_output) / n
+        db2 = np.sum(error_output, axis=0, keepdims=True) / n
+
+        # Hidden layer error
+        error_hidden = np.dot(error_output, self.w2.T) * self.sigmoid_derivative(self.a1)
+
+        # Calculate weights and biases for hidden layer
+        dw1 = np.dot(x_input.T, error_hidden) / n
+        db1 = np.sum(error_hidden, axis=0, keepdims=True) / n
+
+        # Update weights and biases
+        self.w1 += self.alpha * dw1
+        self.b1 += self.alpha * db1
+        self.w2 += self.alpha * dw2
+        self.b2 += self.alpha * db2
+
+    # Train the model
+    def train(self, x_input, y_output):
+        epoch = 1
+        while (self.error_per_epoch[-1] > self.stop_threshold):
+            epoch += 1
+            # Shuffle data
+            perm = np.random.permutation(len(x_input))
+            x_input_shuffled = x_input[perm]
+            y_output_shuffled = y_output[perm]
+
+            # Batch training
+            batch_count = len(x_input_shuffled) // self.batch_size
+            for i in range(batch_count):
+                batch_input = x_input_shuffled[i*self.batch_size:(i+1)*self.batch_size]
+                batch_output = y_output_shuffled[i*self.batch_size:(i+1)*self.batch_size]
+
+                self.forward(batch_input)
+                self.backward(batch_input, batch_output)
+            
+            output_pred = self.forward(x_input)
+
+            # Calculate accuracy over the full dataset (disabled for this assignment)
+            # accuracy = np.mean(output_pred == y_output)
+            # self.accuracy_per_epoch.append(accuracy)
+            # print(f"Epoch {epoch+1}, Accuracy: {accuracy:.4f}"
+
+            # Calculate average error over dataset for this epoch
+            error = np.mean(np.abs(output_pred - y_output))
+            self.error_per_epoch.append(error)
+
+            if epoch % 100 == 0: # print every 100 epochs; wayyyy too much if every epoch
+                print(f"Epoch {epoch}, Error: {error:.4f}")
+
+            # Average error - if average errror is less than stop_threshold, stop training
+            if error < self.stop_threshold:
+                print(f"Training stopped at epoch {epoch+1} at an error of {error:.4f} because average error is less than stop threshold of {self.stop_threshold:.4f}")
 
 
 ##
@@ -43,6 +183,62 @@ class Node:
         self.gameState = gameState
         self.depth = depth
         self.evaluation = evaluation
+
+##
+# mappingFunction
+#
+# Description: Maps a game state to a vector of features
+#
+# Parameters:
+#   gameState - a game state
+#
+# Return: A vector of features
+##
+def mappingFunction(gameState):
+    features = []
+    # Constants
+    me = gameState.whoseTurn
+    enemy = 1 - me
+    myInv = getCurrPlayerInventory(gameState)
+    enemyInv = getEnemyInv(enemy, gameState)
+    myAnts = getAntList(gameState, me, (WORKER,DRONE,SOLDIER,R_SOLDIER,QUEEN))
+    enemyAnts = getAntList(gameState, enemy, (WORKER,DRONE,SOLDIER,R_SOLDIER,QUEEN))
+    myWorkers = getAntList(gameState, me, (WORKER,))
+    
+    # game state stuff; if we win a game
+    features.append(getWinner(gameState) == me)
+    features.append(getWinner(gameState) == enemy)
+    features.append(len(getAntList(gameState, enemy, (QUEEN,))) == 0)
+    features.append(myInv.foodCount == 11)
+    features.append(enemyInv.getAnthill().captureHealth == 0)
+    features.append(len(myAnts) == 0)
+    features.append(enemyInv.foodCount == 11)
+    features.append(myInv.getAnthill().captureHealth == 0)
+
+    # Food features
+    features.append(myInv.foodCount)
+    features.append(enemyInv.foodCount)
+    features.append(len(myWorkers))
+
+    # do worker dropsites stuff later
+
+    # Defense features
+    def on_my_side(coords):
+        y = coords[1]
+        return (y <= 4)
+
+    threats = [a for a in getAntList(gameState, enemy, (QUEEN, WORKER, DRONE, SOLDIER, R_SOLDIER)) if on_my_side(a.coords)]
+    defenders = getAntList(gameState, me, (DRONE, SOLDIER, R_SOLDIER))
+
+    features.append(len(threats) / len(enemyAnts))
+    features.append(len(defenders) / len(myAnts))
+
+    
+
+
+
+
+    return features
 
 ##
 # expandNode
@@ -96,7 +292,7 @@ def utility(gameState):
                     enemyInv.getAnthill().captureHealth == 0:
                 return 0.0  # cost 2 win?
             elif getWinner(gameState) == enemy or \
-                  len(myAnts) == 0 or \
+                    len(myAnts) == 0 or \
                     enemyInv.foodCount == 11 or \
                     myInv.getAnthill().captureHealth == 0:
                 return float(100.0) # float('inf') # cost 2 lose? / best thing ever
@@ -325,7 +521,7 @@ def attackUtility(gameState, myInv, enemyInv, me):
     return max(0.0, min(1.0, proximityScore))
 
 
- ##
+##
 # bestMove
 #
 # Description: Searches a given list of game nodes to find the highest utility move
