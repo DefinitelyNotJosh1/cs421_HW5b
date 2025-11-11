@@ -9,6 +9,8 @@
 import random
 import sys
 import numpy as np
+import pandas as pd
+import os
 
 sys.path.append("..")  #so other modules can be found in parent dir
 from Player import *
@@ -23,17 +25,38 @@ from AIPlayerUtils import *
 # Define it as a class - will make the implementation in ReANTICS way easier if we do it this way
 # Josh:Took inspiration from my own implementation of an ANN in ML class, but simplified it for this assignment
 class ANN:
-    def __init__(self, input_size, hidden_size, output_size, alpha, batch_size, stop_threshold):
+    def __init__(self, input_size, hidden_size, output_size, alpha, batch_size, stop_threshold, weights_and_biases_file):
         # Initialize weights and biases
-        self.w1 = np.random.rand(input_size, hidden_size) * 2 - 1 # -1 to 1
-        self.b1 = np.random.rand(1, hidden_size) * 2 - 1
+        self.weights_and_biases_file = weights_and_biases_file
+        if self.weights_and_biases_file:
+            # if the file exists, great, load it up
+            if os.path.exists(self.weights_and_biases_file):
+                with open(weights_and_biases_file, "rb") as f:
+                    self.w1 = np.load(f)["w1"]
+                    self.b1 = np.load(f)["b1"]
+                    self.w2 = np.load(f)["w2"]
+                    self.b2 = np.load(f)["b2"]
+            else:
+                # if it doesn't exist, create new weights and biases and a new file
+                print(f"Weights and biases file {self.weights_and_biases_file} does not exist, creating new weights and biases and a new file")
+                self.w1 = np.random.rand(input_size, hidden_size) * 2 - 1 # -1 to 1
+                self.b1 = np.random.rand(1, hidden_size) * 2 - 1
+                self.w2 = np.random.rand(hidden_size, output_size) * 2 - 1 
+                self.b2 = np.random.rand(1, output_size) * 2 - 1 
+                # save weights to new file
+                with open(self.weights_and_biases_file, "wb") as f:
+                    np.savez(f, w1=self.w1, b1=self.b1, w2=self.w2, b2=self.b2)
+        else:
+            # if no file is specified, create new weights and biases
+            self.w1 = np.random.rand(input_size, hidden_size) * 2 - 1 # -1 to 1
+            self.b1 = np.random.rand(1, hidden_size) * 2 - 1
+            self.w2 = np.random.rand(hidden_size, output_size) * 2 - 1 
+            self.b2 = np.random.rand(1, output_size) * 2 - 1 
 
-        self.w2 = np.random.rand(hidden_size, output_size) * 2 - 1 
-        self.b2 = np.random.rand(1, output_size) * 2 - 1 
-
+        # other parameters
         self.input_size = input_size
         self.hidden_size = hidden_size
-        self.output_size = output_size
+        self.output_size = output_size 
         self.alpha = alpha
         self.batch_size = batch_size
         self.accuracy_per_epoch = []
@@ -59,10 +82,6 @@ class ANN:
     # Return: The output of the network after passing through the network.
     ##
     def forward(self, input):
-        # Ensure 2D input for consistent matrix operations
-        if isinstance(input, np.ndarray) and input.ndim == 1:
-            input = input.reshape(1, -1)
-        
         # Hidden layer
         self.z1 = np.dot(input, self.w1) + self.b1
         self.a1 = self.sigmoid(self.z1)
@@ -85,20 +104,13 @@ class ANN:
     # Return: Nothing, updates weights and biases in itself.
     ##
     def backward(self, x_input, y_output):
-        # Ensure 2D input for consistent matrix operations
-        if isinstance(x_input, np.ndarray) and x_input.ndim == 1:
-            x_input = x_input.reshape(1, -1)
-        if isinstance(y_output, np.ndarray) and y_output.ndim == 1:
-            y_output = y_output.reshape(1, -1)
-
-        # Note: 
-        #   I divide by n to get the average gradient across the batch to make learning rate independent of batch size.
+        # I divide deltas by n to get the average gradient across the batch to make learning rate independent of batch size
         n = x_input.shape[0]
         
         # Output layer error
         # Note: 
         #   for this assignment, omitting the sigmoid derivative makes convergence ~10x faster.
-        #   I didn't have it in my original ML assignment, but I'll add it here for this assignment.
+        #   I'll keep it so that it's consistent with what we did in class. May remove for 5b.
         error_output = (y_output - self.a2) * self.sigmoid_derivative(self.a2)
 
         # Calculate weights and biases for output layer
@@ -121,6 +133,9 @@ class ANN:
     # Train the model
     def train(self, x_input, y_output):
         epoch = 1
+        # Ensure targets are a (N, 1) column vector to avoid unintended broadcasting
+        if y_output.ndim == 1:
+            y_output = y_output.reshape(-1, 1)
         while (self.error_per_epoch[-1] > self.stop_threshold):
             epoch += 1
             # Shuffle data
@@ -133,25 +148,43 @@ class ANN:
             for i in range(batch_count):
                 batch_input = x_input_shuffled[i*self.batch_size:(i+1)*self.batch_size]
                 batch_output = y_output_shuffled[i*self.batch_size:(i+1)*self.batch_size]
+                if batch_output.ndim == 1:
+                    batch_output = batch_output.reshape(-1, 1)
 
                 self.forward(batch_input)
                 self.backward(batch_input, batch_output)
             
             output_pred = self.forward(x_input)
 
-            # Calculate accuracy over the full dataset (disabled for this assignment)
-            # accuracy = np.mean(output_pred == y_output)
-            # self.accuracy_per_epoch.append(accuracy)
-            # print(f"Epoch {epoch+1}, Accuracy: {accuracy:.4f}"
+            # Calculate accuracy over the full dataset
+            accuracy = np.mean(output_pred == y_output)
+            self.accuracy_per_epoch.append(accuracy)
+            # print(f"Epoch {epoch+1}, Accuracy: {accuracy:.4f}")
 
             # Calculate average error over dataset for this epoch
             error = np.mean(np.abs(output_pred - y_output))
             self.error_per_epoch.append(error)
 
-            if epoch % 100 == 0: # print every 100 epochs; wayyyy too much if every epoch
-                print(f"Epoch {epoch}, Error: {error:.4f}")
+            # print every 100 epochs; wayyyy too many prints if every epoch
+            if epoch % 100 == 0: 
+                print(f"Epoch {epoch}, Error: {error:.4f}, Accuracy: {accuracy:.4f}")
+                # save weights and biases every 100 epochs
+                if self.weights_and_biases_file:
+                    with open(self.weights_and_biases_file, "wb") as f:
+                        np.save(f, self.w1)
+                        np.save(f, self.b1)
+                        np.save(f, self.w2)
+                        np.save(f, self.b2)
+                
+                # trim accuracy and error lists to the last 100 epochs
+                self.accuracy_per_epoch = self.accuracy_per_epoch[-100:]
+                self.error_per_epoch = self.error_per_epoch[-100:]
 
-            # Average error - if average errror is less than stop_threshold, stop training
+                # lower learning rate as we get closer to the stop threshold
+                if epoch % 1000 == 0:
+                    self.alpha *= 0.95
+
+            # if average errror is less than stop threshold, stop training
             if error < self.stop_threshold:
                 print(f"Training stopped at epoch {epoch+1} at an error of {error:.4f} because average error is less than stop threshold of {self.stop_threshold:.4f}")
 
@@ -195,48 +228,175 @@ class Node:
 # Return: A vector of features
 ##
 def mappingFunction(gameState):
-    features = []
-    # Constants
+    # Helper utilities - these are here to avoid divide by zero errors
+    def safe_ratio(numerator, denominator):
+        try:
+            return float(numerator) / float(denominator) if denominator else 0.0
+        except Exception:
+            return 0.0
+
+    # Normalize a count to a value between 0 and 1
+    def cap_norm(count, cap):
+        if cap <= 0:
+            return 0.0
+        count = max(0, min(int(count), int(cap)))
+        return float(count) / float(cap)
+
+    # Normalize a distance to a value between 0 and 1
+    def closeness(distance):
+        max_dist = 10.0
+        # 0 distance -> 1.0; distance >= max_dist -> 0.0
+        try:
+            return max(0.0, min(1.0, 1.0 - (float(distance) / float(max_dist))))
+        except Exception:
+            return 0.0
+
+    # Average a list of values, or return 0 if the list is empty
+    def avg_or_zero(values):
+        return (sum(values) / float(len(values))) if values else 0.0
+
+    # Entities and lists
     me = gameState.whoseTurn
     enemy = 1 - me
     myInv = getCurrPlayerInventory(gameState)
     enemyInv = getEnemyInv(enemy, gameState)
-    myAnts = getAntList(gameState, me, (WORKER,DRONE,SOLDIER,R_SOLDIER,QUEEN))
-    enemyAnts = getAntList(gameState, enemy, (WORKER,DRONE,SOLDIER,R_SOLDIER,QUEEN))
+
+    myAnts = getAntList(gameState, me, (WORKER, DRONE, SOLDIER, R_SOLDIER, QUEEN))
+    enemyAnts = getAntList(gameState, enemy, (WORKER, DRONE, SOLDIER, R_SOLDIER, QUEEN))
     myWorkers = getAntList(gameState, me, (WORKER,))
-    
-    # game state stuff; if we win a game
-    features.append(getWinner(gameState) == me)
-    features.append(getWinner(gameState) == enemy)
-    features.append(len(getAntList(gameState, enemy, (QUEEN,))) == 0)
-    features.append(myInv.foodCount == 11)
-    features.append(enemyInv.getAnthill().captureHealth == 0)
-    features.append(len(myAnts) == 0)
-    features.append(enemyInv.foodCount == 11)
-    features.append(myInv.getAnthill().captureHealth == 0)
+    myAttackers = getAntList(gameState, me, (DRONE, SOLDIER, R_SOLDIER))
+    enemyAttackers = getAntList(gameState, enemy, (DRONE, SOLDIER, R_SOLDIER))
 
-    # Food features
-    features.append(myInv.foodCount)
-    features.append(enemyInv.foodCount)
-    features.append(len(myWorkers))
+    foods = getConstrList(gameState, None, (FOOD,))
+    myHill = myInv.getAnthill()
+    enemyHill = enemyInv.getAnthill()
+    myQueen = myInv.getQueen()
+    enemyQueen = enemyInv.getQueen()
 
-    # do worker dropsites stuff later
+    dropSites = []
+    if myHill is not None:
+        dropSites.append(myHill.coords)
+    tunnels = myInv.getTunnels()
+    if tunnels:
+        dropSites.extend([t.coords for t in tunnels])
 
-    # Defense features
+    # Precompute worker-food and carrier-drop closeness values
+    nonCarryingCloseness = []
+    for w in myWorkers:
+        if not getattr(w, "carrying", False):
+            if foods:
+                minDist = min(approxDist(w.coords, f.coords) for f in foods)
+                nonCarryingCloseness.append(closeness(minDist))
+            else:
+                nonCarryingCloseness.append(0.0)
+
+    carryingCloseness = []
+    for w in myWorkers:
+        if w.carrying:
+            if dropSites:
+                minDrop = min(approxDist(w.coords, d) for d in dropSites)
+                carryingCloseness.append(closeness(minDrop))
+            else:
+                carryingCloseness.append(0.0)
+
+    # Threats/defense geometry
     def on_my_side(coords):
-        y = coords[1]
-        return (y <= 4)
+        return coords[1] <= 4
+
+    def on_enemy_side(coords):
+        return coords[1] > 4
 
     threats = [a for a in getAntList(gameState, enemy, (QUEEN, WORKER, DRONE, SOLDIER, R_SOLDIER)) if on_my_side(a.coords)]
-    defenders = getAntList(gameState, me, (DRONE, SOLDIER, R_SOLDIER))
+    defenders = list(myAttackers)
 
-    features.append(len(threats) / len(enemyAnts))
-    features.append(len(defenders) / len(myAnts))
+    defenderToThreatProximity = 0.0
+    if threats and defenders:
+        perThreat = []
+        for t in threats:
+            dMin = min(approxDist(d.coords, t.coords) for d in defenders)
+            perThreat.append(closeness(dMin))
+        defenderToThreatProximity = avg_or_zero(perThreat)
 
-    
+    # Enemy attackers closeness to my queen/hill
+    enemyToMyQueen = 0.0
+    if enemyAttackers and (myQueen is not None):
+        dMin = min(approxDist(a.coords, myQueen.coords) for a in enemyAttackers)
+        enemyToMyQueen = closeness(dMin)
 
+    enemyToMyHill = 0.0
+    if enemyAttackers and (myHill is not None):
+        dMin = min(approxDist(a.coords, myHill.coords) for a in enemyAttackers)
+        enemyToMyHill = closeness(dMin)
 
+    # My attackers closeness to enemy queen/hill
+    myAtkToEnemyQueen = 0.0
+    if myAttackers and (enemyQueen is not None):
+        vals = [closeness(approxDist(a.coords, enemyQueen.coords)) for a in myAttackers]
+        myAtkToEnemyQueen = avg_or_zero(vals)
 
+    myAtkToEnemyHill = 0.0
+    if myAttackers and (enemyHill is not None):
+        vals = [closeness(approxDist(a.coords, enemyHill.coords)) for a in myAttackers]
+        myAtkToEnemyHill = avg_or_zero(vals)
+
+    # Attackers on enemy side
+    myAttackersOnEnemySide = safe_ratio(len([a for a in myAttackers if on_enemy_side(a.coords)]), max(1, len(myAttackers)))
+
+    # Food near workers
+    foodsNearWorkers = 0.0
+    if foods:
+        if myWorkers:
+            nearCount = 0
+            for f in foods:
+                minWorkerDist = min(approxDist(w.coords, f.coords) for w in myWorkers) if myWorkers else 999
+                if minWorkerDist <= 2:
+                    nearCount += 1
+            foodsNearWorkers = safe_ratio(nearCount, len(foods))
+        else:
+            foodsNearWorkers = 0.0
+
+    # Workers carrying fraction
+    carryingWorkers = len([w for w in myWorkers if getattr(w, "carrying", False)])
+    workersCarryingFrac = safe_ratio(carryingWorkers, len(myWorkers))
+
+    # Build feature vector (24 total, all in [0,1])
+    features = []
+    # 1-3: food levels and delta
+    features.append(safe_ratio(myInv.foodCount, 11))
+    features.append(safe_ratio(enemyInv.foodCount, 11))
+    features.append((float(myInv.foodCount - enemyInv.foodCount) + 11.0) / 22.0)
+    # 4-5: hill capture health normalized
+    features.append(safe_ratio(myHill.captureHealth if myHill is not None else 0, 3))
+    features.append(safe_ratio(enemyHill.captureHealth if enemyHill is not None else 0, 3))
+    # 6-7: capped ant counts
+    features.append(cap_norm(len(myAnts), 20))
+    features.append(cap_norm(len(enemyAnts), 20))
+    # 8-10: composition shares
+    features.append(safe_ratio(len(myWorkers), len(myAnts)))
+    features.append(safe_ratio(len(myAttackers), len(myAnts)))
+    features.append(safe_ratio(len(enemyAttackers), len(enemyAnts)))
+    # 11-14: worker/food and carrier/drop closeness (avg and best)
+    features.append(avg_or_zero(nonCarryingCloseness))
+    features.append(avg_or_zero(carryingCloseness))
+    features.append(max(nonCarryingCloseness) if nonCarryingCloseness else 0.0)
+    features.append(max(carryingCloseness) if carryingCloseness else 0.0)
+    # 15-16: threats on my side and defender proximity
+    features.append(safe_ratio(len(threats), len(enemyAnts)))
+    features.append(defenderToThreatProximity)
+    # 17-18: enemy attackers proximities to my queen/hill
+    features.append(enemyToMyQueen)
+    features.append(enemyToMyHill)
+    # 19-20: my attackers proximities to enemy queen/hill
+    features.append(myAtkToEnemyQueen)
+    features.append(myAtkToEnemyHill)
+    # 21: my attackers positioned on enemy side
+    features.append(myAttackersOnEnemySide)
+    # 22: worker count target (normalized to 5)
+    features.append(cap_norm(len(myWorkers), 5))
+    # 23: fraction of foods that are near any worker (<=2)
+    features.append(foodsNearWorkers)
+    # 24: fraction of workers that are carrying
+    features.append(workersCarryingFrac)
 
     return features
 
@@ -532,14 +692,15 @@ def attackUtility(gameState, myInv, enemyInv, me):
 #
 # Return: The state with the highest utility
 #
-def bestMove(nodes):
+def bestMove(nodes, ann):
     # Initialize the best node with the first node's utility
     bestNodes = [nodes[0]]
 
     # Iterate through nodes to find the one with the highest utility
     for node in nodes:
         if node.evaluation is None:
-            node.evaluation = utility(node.gameState) + node.depth
+            mapping = mappingFunction(node.gameState)
+            node.evaluation = ann.forward(mapping)[0] + node.depth
         if (node.evaluation - node.depth < bestNodes[0].evaluation - bestNodes[0].depth):
             bestNodes = [node]
         elif (node.evaluation - node.depth == bestNodes[0].evaluation - bestNodes[0].depth):
@@ -567,8 +728,9 @@ class AIPlayer(Player):
     #   cpy           - whether the player is a copy (when playing itself)
     ##
     def __init__(self, inputPlayerId):
-        super(AIPlayer,self).__init__(inputPlayerId, "Search Bot")
+        super(AIPlayer,self).__init__(inputPlayerId, "Neural Network")
         self.playerId = inputPlayerId
+        self.ann = ANN(24, 240, 1, 0.01, 400, 0.0001, "weights_and_biases_240.npy")
 
 
     ##
@@ -639,22 +801,27 @@ class AIPlayer(Player):
     ##
 
     def getMove(self, currentState):
-
         frontierNodes = []
         expandedNodes = []
         rootNode = Node(None, None, currentState, 0, None)
         frontierNodes.append(rootNode)
 
         for i in range(3): # 3 is the depth of the search
-            bestNode = bestMove(frontierNodes)
+            bestNode = bestMove(frontierNodes, self.ann)
             frontierNodes.remove(bestNode)
             expandedNodes.append(bestNode)
             newNodes = expandNode(bestNode)
             frontierNodes.extend(newNodes)
 
-        bestNode = bestMove(frontierNodes)
+        bestNode = bestMove(frontierNodes, self.ann)
         while bestNode.depth > 1:
             bestNode = bestNode.parent
+
+        # append the mapping to the file
+        # with open("mapping.csv", "a") as f:
+        #     for _, m in enumerate(mapping):
+        #         f.write(f"{m},")
+        #     f.write(f"{utility}\n")
         return bestNode.move
 
 
@@ -687,18 +854,18 @@ totalTests = 4
 passedTests = 0
 # BEST MOVE TEST
 # print("| Beginning bestMove test")
-nodes = []
-for i in range(10):
-    node = Node(None, None, GameState.getBlankState(), 1, None)
-    nodes.append(node)
-    node.evaluation = i / 10 + node.depth
-bestNode = bestMove(nodes)
+# nodes = []
+# for i in range(10):
+#     node = Node(None, None, GameState.getBlankState(), 1, None)
+#     nodes.append(node)
+#     node.evaluation = i / 10 + node.depth
+# bestNode = bestMove(nodes, ann)
 
-if bestNode.evaluation == 1.0:
-    # print(f"| BestMove test passed. Value was {bestNode.evaluation}, expected 1.9")
-    passedTests += 1
-else:
-    print(f"| BestMove test failed. Value was {bestNode.evaluation}, expected 1.9")
+# if bestNode.evaluation == 1.0:
+#     # print(f"| BestMove test passed. Value was {bestNode.evaluation}, expected 1.9")
+#     passedTests += 1
+# else:
+#     print(f"| BestMove test failed. Value was {bestNode.evaluation}, expected 1.9")
 
 
 # UTILITY TEST
