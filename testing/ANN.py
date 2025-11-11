@@ -158,10 +158,7 @@ class ANN:
                 # save weights and biases every 100 epochs
                 if self.weights_and_biases_file:
                     with open(self.weights_and_biases_file, "wb") as f:
-                        np.save(f, self.w1)
-                        np.save(f, self.b1)
-                        np.save(f, self.w2)
-                        np.save(f, self.b2)
+                        np.savez(f, w1=self.w1, b1=self.b1, w2=self.w2, b2=self.b2)
                 
                 # trim accuracy and error lists to the last 100 epochs
                 self.accuracy_per_epoch = self.accuracy_per_epoch[-100:]
@@ -188,7 +185,7 @@ alpha = 0.01
 batch_size = 400
 stop_threshold = 0.0001
 
-ann = ANN(input_size, hidden_size, output_size, alpha, batch_size, stop_threshold, "src/weights_and_biases_240.npy")
+ann = ANN(input_size, hidden_size, output_size, alpha, batch_size, stop_threshold, "src/weights_and_biases_240.npz")
 
 data = pd.read_csv("src/mapping.csv")
 
