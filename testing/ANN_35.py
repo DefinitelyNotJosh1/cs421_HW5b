@@ -110,7 +110,7 @@ class ANN:
         # Note: 
         #   for this assignment, omitting the sigmoid derivative makes convergence ~10x faster.
         #   I'll keep it so that it's consistent with what we did in class. May remove for 5b.
-        error_output = (y_output - self.a3) * self.sigmoid_derivative(self.a3)
+        error_output = (y_output - self.a3) #* self.sigmoid_derivative(self.a3)
 
         # Calculate weights and biases for output layer
         dw3 = np.dot(self.a2.T, error_output) / n
@@ -186,8 +186,8 @@ class ANN:
                 self.error_per_epoch = self.error_per_epoch[-100:]
 
                 # lower learning rate as we get closer to the stop threshold
-                # if epoch % 1000 == 0:
-                #     self.alpha *= 0.95
+                if epoch % 1000 == 0:
+                    self.alpha *= 0.95
 
             # if average errror is less than stop threshold, stop training
             if error < self.stop_threshold:
@@ -198,24 +198,34 @@ class ANN:
 
 
 # Create an ANN
-input_size = 10
+input_size = 35
 
 output_size = 1
-hidden_size1 = 20
-hidden_size2 = 10
-alpha = 0.5
-batch_size = 2000
+hidden_size1 = 105
+hidden_size2 = 35
+alpha = 3.0
+batch_size = 5000
 stop_threshold = 0.000000001
 
-ann = ANN(input_size, hidden_size1, hidden_size2, output_size, alpha, batch_size, stop_threshold, "testing/10/weights10_10_20_OLD.npz")
+ann = ANN(input_size, hidden_size1, hidden_size2, output_size, alpha, batch_size, stop_threshold, "testing/35/weights35.2_105_35_2.npz")
 
-data = pd.read_csv("src/mapping_10.csv")
+data = pd.read_csv("src/mapping_35_2.csv")
 
 # shuffle the rows b
 data = data.sample(frac=1).reset_index(drop=True)
 
 x_input = data.iloc[:, :-1].values
 y_output = data.iloc[:, -1].values.reshape(-1, 1)
+
+# get max output and min output
+max_output = np.max(y_output)
+min_output = np.min(y_output)
+print("Max utility: ", max_output)
+print("Min utility: ", min_output)
+
+# normalize Y output to be 0 and 1
+y_output = (y_output - min_output) / (max_output - min_output)
+
 
 
 ann.train(x_input, y_output)

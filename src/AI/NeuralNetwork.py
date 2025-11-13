@@ -260,8 +260,7 @@ def mappingFunction(gameState):
         return float(count) / float(cap)
 
     # Normalize a distance to a value between 0 and 1
-    def closeness(distance):
-        max_dist = 10.0
+    def closeness(distance, max_dist=10.0):
         # 0 distance -> 1.0; distance >= max_dist -> 0.0
         try:
             return max(0.0, min(1.0, 1.0 - (float(distance) / float(max_dist))))
@@ -283,13 +282,21 @@ def mappingFunction(gameState):
     myWorkers = getAntList(gameState, me, (WORKER,))
     myAttackers = getAntList(gameState, me, (DRONE, SOLDIER, R_SOLDIER))
     enemyAttackers = getAntList(gameState, enemy, (DRONE, SOLDIER, R_SOLDIER))
+    myDrones = getAntList(gameState, me, (DRONE,))
+    mySoldiers = getAntList(gameState, me, (SOLDIER,))
+    myRSoldiers = getAntList(gameState, me, (R_SOLDIER,))
 
     foods = getConstrList(gameState, None, (FOOD,))
+    enemyWorkers = getAntList(gameState, enemy, (WORKER,))
     myHill = myInv.getAnthill()
     enemyHill = enemyInv.getAnthill()
     myQueen = myInv.getQueen()
     enemyQueen = enemyInv.getQueen()
+    enemyDrones = getAntList(gameState, enemy, (DRONE,))
+    enemySoldiers = getAntList(gameState, enemy, (SOLDIER,))
+    enemyRSoldiers = getAntList(gameState, enemy, (R_SOLDIER,))
 
+    # get all the drop sites in a list
     dropSites = []
     if myHill is not None:
         dropSites.append(myHill.coords)
@@ -300,7 +307,7 @@ def mappingFunction(gameState):
     # Precompute worker-food and carrier-drop closeness values
     nonCarryingCloseness = []
     for w in myWorkers:
-        if not getattr(w, "carrying", False):
+        if not w.carrying:
             if foods:
                 minDist = min(approxDist(w.coords, f.coords) for f in foods)
                 nonCarryingCloseness.append(closeness(minDist))
@@ -358,36 +365,36 @@ def mappingFunction(gameState):
 
     # Attackers on enemy side
     myAttackersOnEnemySide = safe_ratio(len([a for a in myAttackers if on_enemy_side(a.coords)]), max(1, len(myAttackers)))
+    enemyAttackersOnMySide = safe_ratio(len([a for a in enemyAttackers if on_my_side(a.coords)]), max(1, len(enemyAttackers)))
 
-    # Food near workers
-    foodsNearWorkers = 0.0
-    if foods:
-        if myWorkers:
-            nearCount = 0
-            for f in foods:
-                minWorkerDist = min(approxDist(w.coords, f.coords) for w in myWorkers) if myWorkers else 999
-                if minWorkerDist <= 2:
-                    nearCount += 1
-            foodsNearWorkers = safe_ratio(nearCount, len(foods))
-        else:
-            foodsNearWorkers = 0.0
-
-    # Workers carrying fraction
+    # Workers carrying
     carryingWorkers = len([w for w in myWorkers if getattr(w, "carrying", False)])
     workersCarryingFrac = safe_ratio(carryingWorkers, len(myWorkers))
 
-    # Build feature vector (24 total, all in [0,1])
+    # Average distance of workers who aren't carrying to nearest food
+    CarryDistanceToNearest = 0.0
+    for w in myWorkers:
+        if not w.carrying:
+            if foods:
+                minDist = min(approxDist(w.coords, f.coords) for f in foods)
+                CarryDistanceToNearest += minDist
+            else:
+                CarryDistanceToNearest += 999
+    CarryDistanceToNearest /= len(myWorkers) if myWorkers else 1.0
+    CarryDistanceToNearest /= 10.0  # normalize to around 0-1
+
+    # Build feature vector (35 total)
     features = []
     # 1-3: food levels and delta
-    features.append(safe_ratio(myInv.foodCount, 11))
-    features.append(safe_ratio(enemyInv.foodCount, 11))
-    features.append((float(myInv.foodCount - enemyInv.foodCount) + 11.0) / 22.0)
+    features.append(myInv.foodCount / 11.0)
+    features.append(enemyInv.foodCount / 11.0)
+    features.append(((float(myInv.foodCount - enemyInv.foodCount) + 11.0)) / 22.0)
     # 4-5: hill capture health normalized
     features.append(safe_ratio(myHill.captureHealth if myHill is not None else 0, 3))
     features.append(safe_ratio(enemyHill.captureHealth if enemyHill is not None else 0, 3))
-    # 6-7: capped ant counts
-    features.append(cap_norm(len(myAnts), 20))
-    features.append(cap_norm(len(enemyAnts), 20))
+    # 6-7: ant counts
+    features.append(len(myAnts))
+    features.append(len(enemyAnts))
     # 8-10: composition shares
     features.append(safe_ratio(len(myWorkers), len(myAnts)))
     features.append(safe_ratio(len(myAttackers), len(myAnts)))
@@ -395,8 +402,8 @@ def mappingFunction(gameState):
     # 11-14: worker/food and carrier/drop closeness (avg and best)
     features.append(avg_or_zero(nonCarryingCloseness))
     features.append(avg_or_zero(carryingCloseness))
-    features.append(max(nonCarryingCloseness) if nonCarryingCloseness else 0.0)
-    features.append(max(carryingCloseness) if carryingCloseness else 0.0)
+    features.append(min(nonCarryingCloseness) if nonCarryingCloseness else 0.0)
+    features.append(min(carryingCloseness) if carryingCloseness else 0.0)
     # 15-16: threats on my side and defender proximity
     features.append(safe_ratio(len(threats), len(enemyAnts)))
     features.append(defenderToThreatProximity)
@@ -408,12 +415,38 @@ def mappingFunction(gameState):
     features.append(myAtkToEnemyHill)
     # 21: my attackers positioned on enemy side
     features.append(myAttackersOnEnemySide)
-    # 22: worker count target (normalized to 5)
-    features.append(cap_norm(len(myWorkers), 5))
-    # 23: fraction of foods that are near any worker (<=2)
-    features.append(foodsNearWorkers)
-    # 24: fraction of workers that are carrying
+    # 22: enemy attackers on my side
+    features.append(enemyAttackersOnMySide)
+    # 23: distance to nearest food for workers who aren't carrying
+    features.append(CarryDistanceToNearest)
+    # 24: Number of workers carrying
     features.append(workersCarryingFrac)
+    # 25: number of enemy workers
+    features.append(safe_ratio(len(enemyWorkers), len(enemyAnts)))
+    # 26: number of my workers
+    features.append(safe_ratio(len(myWorkers), len(myAnts)))
+    # 27: number of my drones
+    features.append(safe_ratio(len(myDrones), len(myAnts)))
+    # 28: number of enemy drones
+    features.append(safe_ratio(len(enemyDrones), len(enemyAnts)))
+    # 29: number of my soldiers
+    features.append(safe_ratio(len(mySoldiers), len(myAnts)))
+    # 30: number of enemy soldiers
+    features.append(safe_ratio(len(enemySoldiers), len(enemyAnts)))
+    # 31: number of my r_soldiers
+    features.append(safe_ratio(len(myRSoldiers), len(myAnts)))
+    # 32: number of enemy r_soldiers
+    features.append(safe_ratio(len(enemyRSoldiers), len(enemyAnts)))
+    # 33: Distance my soldiers are from enemy queen
+    if enemyQueen is not None:
+        features.append(avg_or_zero([approxDist(s.coords, enemyQueen.coords) for s in mySoldiers]))
+    else:
+        features.append(0.0)
+    # 34: Distance my soldiers are from enemy hill
+    features.append(avg_or_zero([approxDist(s.coords, enemyHill.coords) for s in mySoldiers]))
+    # 35: Distance my soldiers are from enemy anthill
+    features.append(avg_or_zero([approxDist(s.coords, enemyInv.getAnthill().coords) for s in mySoldiers]))
+
 
     return features
 
@@ -497,7 +530,7 @@ def utility(gameState):
 
 
 
-        utility = (1.0 - utility) #* 8.7
+        utility = (1.0 - utility)
         return utility
 
 
@@ -521,7 +554,7 @@ def foodUtility(gameState, myInv, enemyInv, me):
         foodScore += (myInv.foodCount / 11) * 0.5 # This is on a scale of 0 - 1 - good, now multiply by multiplier
         foodScore -= (enemyInv.foodCount / 11) * 0.5
         # print(f"Food Score: {foodScore}")
-        utility += foodScore * 0.97
+        utility += foodScore * 0.95
 
 
         # Some help from ChatGPT
@@ -588,9 +621,8 @@ def foodUtility(gameState, myInv, enemyInv, me):
 
         # print(f"Worker Score: {workerScore}")
         # Ensure workerScore in [0,1]
-        workerScore = max(0.0, min(1.0, workerScore))
-        utility += (workerScore * 0.03)
-        utility = min(utility, 1.0)
+        # workerScore = max(0.0, min(1.0, workerScore))
+        utility += (workerScore * 0.05)
         return utility
 
 
@@ -716,9 +748,9 @@ def bestMove(nodes, ann):
     # Iterate through nodes to find the one with the highest utility
     for node in nodes:
         if node.evaluation is None:
-            # mapping = mappingFunction(node.gameState)
-            # node.evaluation = ann.forward(mapping)[0] + node.depth
-            node.evaluation = utility(node.gameState)
+            mapping = mappingFunction(node.gameState)
+            node.evaluation = ann.forward(mapping)[0] + node.depth
+            # node.evaluation = utility(node.gameState)
         if (node.evaluation - node.depth < bestNodes[0].evaluation - bestNodes[0].depth):
             bestNodes = [node]
         elif (node.evaluation - node.depth == bestNodes[0].evaluation - bestNodes[0].depth):
@@ -748,7 +780,7 @@ class AIPlayer(Player):
     def __init__(self, inputPlayerId):
         super(AIPlayer,self).__init__(inputPlayerId, "Neural Network")
         self.playerId = inputPlayerId
-        self.ann = ANN(24, 72, 24, 1, 0.01, 400, 0.01, "weights_and_biases_72_24_2.npz")
+        self.ann = ANN(35, 105, 35, 1, 0.01, 400, 0.01, "weights35.2_105_35_2.npz")
 
 
     ##
@@ -836,12 +868,12 @@ class AIPlayer(Player):
             bestNode = bestNode.parent
 
         # append the mapping to the file
-        mapping = mappingFunction(bestNode.gameState)
-        util = utility(bestNode.gameState)
-        with open("mapping.csv", "a") as f:
-            for _, m in enumerate(mapping):
-                f.write(f"{m},")
-            f.write(f"{util}\n")
+        # mapping = mappingFunction(bestNode.gameState)
+        # util = utility(bestNode.gameState)
+        # with open("mapping_35_2.csv", "a") as f:
+        #     for _, m in enumerate(mapping):
+        #         f.write(f"{m},")
+        #     f.write(f"{util}\n")
         return bestNode.move
 
 

@@ -1,4 +1,4 @@
-Best so far: 72_24_2, with error of 0.0048
+Best so far: 72_24_2, with error of 0.0045 - THIS ONE IS THE BEST (probably)
 96_48_2: Error 0.0051
 120_60: 0.0072
 240_120: 0.0117
