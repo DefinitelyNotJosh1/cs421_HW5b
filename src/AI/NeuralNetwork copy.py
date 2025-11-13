@@ -283,6 +283,16 @@ def mappingFunction(gameState):
     myWorkers = getAntList(gameState, me, (WORKER,))
     myAttackers = getAntList(gameState, me, (DRONE, SOLDIER, R_SOLDIER))
     enemyAttackers = getAntList(gameState, enemy, (DRONE, SOLDIER, R_SOLDIER))
+    # Per-type lists (for counts)
+    myDrones = getAntList(gameState, me, (DRONE,))
+    mySoldiers = getAntList(gameState, me, (SOLDIER,))
+    myRSoldiers = getAntList(gameState, me, (R_SOLDIER,))
+    myQueenList = getAntList(gameState, me, (QUEEN,))
+    enemyWorkers = getAntList(gameState, enemy, (WORKER,))
+    enemyDrones = getAntList(gameState, enemy, (DRONE,))
+    enemySoldiers = getAntList(gameState, enemy, (SOLDIER,))
+    enemyRSoldiers = getAntList(gameState, enemy, (R_SOLDIER,))
+    enemyQueenList = getAntList(gameState, enemy, (QUEEN,))
 
     foods = getConstrList(gameState, None, (FOOD,))
     myHill = myInv.getAnthill()
@@ -296,6 +306,13 @@ def mappingFunction(gameState):
     tunnels = myInv.getTunnels()
     if tunnels:
         dropSites.extend([t.coords for t in tunnels])
+
+    # Geometry helpers
+    def on_my_side(coords):
+        return coords[1] <= 4
+
+    def on_enemy_side(coords):
+        return coords[1] > 4
 
     # Precompute worker-food and carrier-drop closeness values
     nonCarryingCloseness = []
@@ -317,12 +334,6 @@ def mappingFunction(gameState):
                 carryingCloseness.append(0.0)
 
     # Threats/defense geometry
-    def on_my_side(coords):
-        return coords[1] <= 4
-
-    def on_enemy_side(coords):
-        return coords[1] > 4
-
     threats = [a for a in getAntList(gameState, enemy, (QUEEN, WORKER, DRONE, SOLDIER, R_SOLDIER)) if on_my_side(a.coords)]
     defenders = list(myAttackers)
 
@@ -376,44 +387,201 @@ def mappingFunction(gameState):
     carryingWorkers = len([w for w in myWorkers if getattr(w, "carrying", False)])
     workersCarryingFrac = safe_ratio(carryingWorkers, len(myWorkers))
 
-    # Build feature vector (24 total, all in [0,1])
+    # Additional metrics for extended features
+    # Helper for symmetric difference normalization
+    def sym_diff_norm(a, b, cap):
+        try:
+            diff = max(-cap, min(cap, int(a) - int(b)))
+            return (diff + cap) / (2.0 * cap)
+        except Exception:
+            return 0.5
+
+    # Per-type normalized counts caps
+    W_CAP, A_CAP, Q_CAP = 5, 5, 1
+
+    # Worker-centric food collection signals
+    workersOnFood = 0
+    workersAdjFood = 0
+    carriersOnDrop = 0
+    totalCarriers = 0
+    # Threat checks for workers
+    threatenedCarriers = 0
+    threatenedNonCarriers = 0
+    # For throughput estimate
+    throughputSum = 0.0
+
+    # Helpers
+    foodCoords = [f.coords for f in foods] if foods else []
+    dropCoords = list(dropSites)
+    R_STRIKE = 2  # move+attack radius proxy for "threatened"
+
+    for w in myWorkers:
+        atFood = any(w.coords == fc for fc in foodCoords)
+        if atFood:
+            workersOnFood += 1
+        # Adjacent-to-food (<=1)
+        if foodCoords:
+            distToNearestFood = min(approxDist(w.coords, fc) for fc in foodCoords)
+            if distToNearestFood <= 1:
+                workersAdjFood += 1
+        else:
+            distToNearestFood = None
+
+        if getattr(w, "carrying", False):
+            totalCarriers += 1
+            # Carrier on drop
+            if dropCoords and any(w.coords == dc for dc in dropCoords):
+                carriersOnDrop += 1
+            # Threatened carriers
+            if enemyAttackers:
+                minEA = min(approxDist(ea.coords, w.coords) for ea in enemyAttackers)
+                if minEA <= R_STRIKE:
+                    threatenedCarriers += 1
+            # Throughput: only distance to drop
+            if dropCoords:
+                d_drop = min(approxDist(w.coords, dc) for dc in dropCoords)
+            else:
+                d_drop = 999
+            throughputSum += 1.0 / float(1 + d_drop)
+        else:
+            # Threatened non-carriers
+            if enemyAttackers:
+                minEA = min(approxDist(ea.coords, w.coords) for ea in enemyAttackers)
+                if minEA <= R_STRIKE:
+                    threatenedNonCarriers += 1
+            # Throughput: food + drop segment
+            if foodCoords:
+                nearestFood = min(foodCoords, key=lambda fc: approxDist(w.coords, fc))
+                d_food = approxDist(w.coords, nearestFood)
+                if dropCoords:
+                    d_food_drop = min(approxDist(nearestFood, dc) for dc in dropCoords)
+                else:
+                    d_food_drop = 999
+                throughputSum += 1.0 / float(1 + d_food + d_food_drop)
+
+    workers_at_food_frac = safe_ratio(workersOnFood, len(myWorkers))
+    workers_adjacent_food_frac = safe_ratio(workersAdjFood, len(myWorkers))
+    carriers_at_drop_frac = safe_ratio(carriersOnDrop, totalCarriers)
+    carriers_threatened_frac = safe_ratio(threatenedCarriers, totalCarriers)
+    noncarriers_threatened_frac = safe_ratio(threatenedNonCarriers, len(myWorkers) - totalCarriers)
+    throughput_estimate = throughputSum / float(len(myWorkers)) if len(myWorkers) > 0 else 0.0
+
+    # Food-to-drop closeness stats
+    foodToDropClosenessVals = []
+    if foodCoords and dropCoords:
+        for fc in foodCoords:
+            d = min(approxDist(fc, dc) for dc in dropCoords)
+            foodToDropClosenessVals.append(closeness(d))
+    food_to_drop_min = min(foodToDropClosenessVals) if foodToDropClosenessVals else 0.0
+    food_to_drop_avg = avg_or_zero(foodToDropClosenessVals)
+
+    # Contested food fractions
+    contested_my = 0
+    contested_enemy = 0
+    if foodCoords:
+        for fc in foodCoords:
+            myDist = min((approxDist(w.coords, fc) for w in myWorkers), default=999)
+            enemyDist = min((approxDist(w.coords, fc) for w in enemyWorkers), default=999)
+            if myDist < enemyDist:
+                contested_my += 1
+            elif enemyDist < myDist:
+                contested_enemy += 1
+    contested_food_my_frac = safe_ratio(contested_my, len(foodCoords))
+    contested_food_enemy_frac = safe_ratio(contested_enemy, len(foodCoords))
+
+    # Drop congestion: max workers within 1 of a drop site normalized by worker count
+    drop_congestion = 0.0
+    if dropCoords and myWorkers:
+        maxCount = 0
+        for dc in dropCoords:
+            cnt = sum(1 for w in myWorkers if approxDist(w.coords, dc) <= 1)
+            if cnt > maxCount:
+                maxCount = cnt
+        drop_congestion = safe_ratio(maxCount, len(myWorkers))
+
+    # Defenders covering threats: fraction of enemy attackers on my side that have a defender within r
+    rCover = 2
+    enemyThreats = [a for a in enemyAttackers if on_my_side(a.coords)]
+    covered = 0
+    if enemyThreats and myAttackers:
+        for t in enemyThreats:
+            md = min(approxDist(d.coords, t.coords) for d in myAttackers)
+            if md <= rCover:
+                covered += 1
+    defenders_covering_threats_frac = 1.0 if not enemyThreats else safe_ratio(covered, len(enemyThreats))
+
+    # ===================== Build feature vector (50 total, all in [0,1]) =====================
     features = []
     # 1-3: food levels and delta
-    features.append(safe_ratio(myInv.foodCount, 11))
-    features.append(safe_ratio(enemyInv.foodCount, 11))
-    features.append((float(myInv.foodCount - enemyInv.foodCount) + 11.0) / 22.0)
+    features.append(safe_ratio(myInv.foodCount, 11))  # 1
+    features.append(safe_ratio(enemyInv.foodCount, 11))  # 2
+    features.append((float(myInv.foodCount - enemyInv.foodCount) + 11.0) / 22.0)  # 3
     # 4-5: hill capture health normalized
-    features.append(safe_ratio(myHill.captureHealth if myHill is not None else 0, 3))
-    features.append(safe_ratio(enemyHill.captureHealth if enemyHill is not None else 0, 3))
+    features.append(safe_ratio(myHill.captureHealth if myHill is not None else 0, 3))  # 4
+    features.append(safe_ratio(enemyHill.captureHealth if enemyHill is not None else 0, 3))  # 5
     # 6-7: capped ant counts
-    features.append(cap_norm(len(myAnts), 20))
-    features.append(cap_norm(len(enemyAnts), 20))
+    features.append(cap_norm(len(myAnts), 20))  # 6
+    features.append(cap_norm(len(enemyAnts), 20))  # 7
     # 8-10: composition shares
-    features.append(safe_ratio(len(myWorkers), len(myAnts)))
-    features.append(safe_ratio(len(myAttackers), len(myAnts)))
-    features.append(safe_ratio(len(enemyAttackers), len(enemyAnts)))
+    features.append(safe_ratio(len(myWorkers), len(myAnts)))  # 8
+    features.append(safe_ratio(len(myAttackers), len(myAnts)))  # 9
+    features.append(safe_ratio(len(enemyAttackers), len(enemyAnts)))  # 10
     # 11-14: worker/food and carrier/drop closeness (avg and best)
-    features.append(avg_or_zero(nonCarryingCloseness))
-    features.append(avg_or_zero(carryingCloseness))
-    features.append(max(nonCarryingCloseness) if nonCarryingCloseness else 0.0)
-    features.append(max(carryingCloseness) if carryingCloseness else 0.0)
+    features.append(avg_or_zero(nonCarryingCloseness))  # 11
+    features.append(avg_or_zero(carryingCloseness))  # 12
+    features.append(max(nonCarryingCloseness) if nonCarryingCloseness else 0.0)  # 13
+    features.append(max(carryingCloseness) if carryingCloseness else 0.0)  # 14
     # 15-16: threats on my side and defender proximity
-    features.append(safe_ratio(len(threats), len(enemyAnts)))
-    features.append(defenderToThreatProximity)
+    features.append(safe_ratio(len(threats), len(enemyAnts)))  # 15
+    features.append(defenderToThreatProximity)  # 16
     # 17-18: enemy attackers proximities to my queen/hill
-    features.append(enemyToMyQueen)
-    features.append(enemyToMyHill)
+    features.append(enemyToMyQueen)  # 17
+    features.append(enemyToMyHill)  # 18
     # 19-20: my attackers proximities to enemy queen/hill
-    features.append(myAtkToEnemyQueen)
-    features.append(myAtkToEnemyHill)
+    features.append(myAtkToEnemyQueen)  # 19
+    features.append(myAtkToEnemyHill)  # 20
     # 21: my attackers positioned on enemy side
-    features.append(myAttackersOnEnemySide)
+    features.append(myAttackersOnEnemySide)  # 21
     # 22: worker count target (normalized to 5)
-    features.append(cap_norm(len(myWorkers), 5))
+    features.append(cap_norm(len(myWorkers), 5))  # 22
     # 23: fraction of foods that are near any worker (<=2)
-    features.append(foodsNearWorkers)
+    features.append(foodsNearWorkers)  # 23
     # 24: fraction of workers that are carrying
-    features.append(workersCarryingFrac)
+    features.append(workersCarryingFrac)  # 24
+
+    # 25-34: per-type counts for both sides (normalized)
+    features.append(cap_norm(len(myWorkers), W_CAP))  # 25
+    features.append(cap_norm(len(enemyWorkers), W_CAP))  # 26
+    features.append(cap_norm(len(myDrones), A_CAP))  # 27
+    features.append(cap_norm(len(enemyDrones), A_CAP))  # 28
+    features.append(cap_norm(len(mySoldiers), A_CAP))  # 29
+    features.append(cap_norm(len(enemySoldiers), A_CAP))  # 30
+    features.append(cap_norm(len(myRSoldiers), A_CAP))  # 31
+    features.append(cap_norm(len(enemyRSoldiers), A_CAP))  # 32
+    features.append(cap_norm(len(myQueenList), Q_CAP))  # 33
+    features.append(cap_norm(len(enemyQueenList), Q_CAP))  # 34
+
+    # 35-38: symmetric diffs (normalized to [0,1])
+    features.append(sym_diff_norm(len(myWorkers), len(enemyWorkers), W_CAP))  # 35
+    features.append(sym_diff_norm(len(myDrones), len(enemyDrones), A_CAP))  # 36
+    features.append(sym_diff_norm(len(mySoldiers), len(enemySoldiers), A_CAP))  # 37
+    features.append(sym_diff_norm(len(myRSoldiers), len(enemyRSoldiers), A_CAP))  # 38
+
+    # 39-49: worker-centric food collection and contest metrics
+    features.append(workers_at_food_frac)  # 39
+    features.append(workers_adjacent_food_frac)  # 40
+    features.append(carriers_at_drop_frac)  # 41
+    features.append(carriers_threatened_frac)  # 42
+    features.append(noncarriers_threatened_frac)  # 43
+    features.append(throughput_estimate)  # 44
+    features.append(contested_food_my_frac)  # 45
+    features.append(contested_food_enemy_frac)  # 46
+    features.append(food_to_drop_min)  # 47
+    features.append(food_to_drop_avg)  # 48
+    features.append(drop_congestion)  # 49
+
+    # 50: defenders covering threats on my side
+    features.append(defenders_covering_threats_frac)  # 50
 
     return features
 
@@ -746,9 +914,9 @@ class AIPlayer(Player):
     #   cpy           - whether the player is a copy (when playing itself)
     ##
     def __init__(self, inputPlayerId):
-        super(AIPlayer,self).__init__(inputPlayerId, "Neural Network")
+        super(AIPlayer,self).__init__(inputPlayerId, "COPIED Neural Network")
         self.playerId = inputPlayerId
-        self.ann = ANN(24, 72, 24, 1, 0.01, 400, 0.01, "weights_and_biases_72_24_2.npz")
+        self.ann = ANN(50, 200, 100, 1, 0.01, 400, 0.01, "weights_50_200_100.npz")
 
 
     ##
@@ -835,10 +1003,11 @@ class AIPlayer(Player):
         while bestNode.depth > 1:
             bestNode = bestNode.parent
 
-        # append the mapping to the file
         mapping = mappingFunction(bestNode.gameState)
         util = utility(bestNode.gameState)
-        with open("mapping.csv", "a") as f:
+
+        # append the mapping to the file
+        with open("mapping_50.csv", "a") as f:
             for _, m in enumerate(mapping):
                 f.write(f"{m},")
             f.write(f"{util}\n")

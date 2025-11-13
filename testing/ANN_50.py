@@ -175,7 +175,7 @@ class ANN:
 
             # print every 100 epochs; wayyyy too many prints if every epoch
             if epoch % 100 == 0: 
-                print(f"Epoch {epoch}, Error: {error:.8f}, Accuracy: {accuracy:.8f}")
+                print(f"Epoch {epoch}, Error: {error:.4f}, Accuracy: {accuracy:.4f}")
                 # save weights and biases every 100 epochs
                 if self.weights_and_biases_file:
                     with open(self.weights_and_biases_file, "wb") as f:
@@ -186,8 +186,8 @@ class ANN:
                 self.error_per_epoch = self.error_per_epoch[-100:]
 
                 # lower learning rate as we get closer to the stop threshold
-                if epoch % 1000 == 0:
-                    self.alpha *= 0.95
+                # if epoch % 1000 == 0:
+                    # self.alpha *= 0.95
 
             # if average errror is less than stop threshold, stop training
             if error < self.stop_threshold:
@@ -198,21 +198,21 @@ class ANN:
 
 
 # Create an ANN
-input_size = 24
+input_size = 50
 
 output_size = 1
 hidden_size1 = 72
 hidden_size2 = 24
-alpha = 0.5
+alpha = 3.0
 batch_size = 5000
-stop_threshold = 0.000000001
+stop_threshold = 0.0001
 
-ann = ANN(input_size, hidden_size1, hidden_size2, output_size, alpha, batch_size, stop_threshold, "src/weights_and_biases_72_24_4.npz")
+ann = ANN(input_size, hidden_size1, hidden_size2, output_size, alpha, batch_size, stop_threshold, "src/weights_50_72_24.npz")
 
-data = pd.read_csv("src/mapping.csv")
+data = pd.read_csv("src/mapping_50.csv")
 
-# shuffle the rows b
-data = data.sample(frac=1).reset_index(drop=True)
+# shuffle the rows
+data = data.reindex(np.random.permutation(data.index))
 
 x_input = data.iloc[:, :-1].values
 y_output = data.iloc[:, -1].values.reshape(-1, 1)
