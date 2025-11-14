@@ -91,10 +91,15 @@ def utility(state): #to be done later along with the unit tests
     ret = ret ** 0.2
     return 1.0 / (1.0 + math.exp(-ret))
 
+node_num = 10 #number of nodes
 neural = [] #weights for hidden nodes
 neural_output = [] #weights for output node
 deltas = [] #delta values for hidden nodes
+hidden_values = [] #values of the hidden node, to be multiplied by neural_output
 memory = []
+
+def initialize_nodes():
+    pass
 
 def run_neural(state):
     mapping = return_map(state)
@@ -102,52 +107,75 @@ def run_neural(state):
     for i in range(len(neural_output) - 1):
         summate= 0
         for i in range(len(neural) - 1):
-            mapping[i] = neural[i+1]
-    return ret
+            summate += mapping[i] * neural[i+1]
+        summate = 1.0 / (1.0 + math.exp(-summate) )
+        ret += summate * neural_output[i+1]
+    ret = (1.0 / (1.0 + math.exp(-ret) ))
+    return ret # return the neural utility
 
 def return_map(state):
-    pass
+    the_map = []
+    for i in range(11):
+        the_map.append(inputval(state, i))
+    return the_map
 
-def input1(state):
-    
-    return 0
-
-def input2(state):
-    pass
-
-def input3(state):
+def inputval(state, int_input):
+    match (int_input):
+        case 0: #worker num == 1
+            if (len(getAntList(state, state.whoseTurn, (WORKER,))) == 1): return 1
+            else: return 0
+        case 1: #worker carry == true
+            pass
+        case 2: #food amount
+            return state.inventories[state.whoseTurn].foodCount
+        case 3: #queen coords == anthill
+            if (getAntList(state, state.whoseTurn, (QUEEN,))[0] == getConstrList(state, state.whoseTurn, (ANTHILL,))[0]): return 1
+            else: return 0
+        case 4: #distance from worker to food if worker exists
+            pass
+        case 5: #distance from worker to tunnel if worker exists
+            pass
+        case 6: #ranged soldier == 1
+            pass
+        case 7: #distance from ranged soldier to enemy worker if both exist
+            pass
+        case 8: #distance from ranged soldier to enemy queen if both exist
+            pass
+        case 9: #health of enemy queen
+            pass
+        case 10: #number of enemy workers
+            pass
     pass
 
 def learn(actual, expected, state):
     error = expected - actual
     d = actual * (1 - actual) * error
     mapping = return_map(state)
-
-	for i in range(len(neural2)):
-		if i > 0: neural2[i] = neural2[i] + 0.1 * d * n_input2[i-1]
-		else: neural2[i] = neural2[i] + 0.1 * d * 1
-		pass
+    for i in range(len(neural_output)):
+        if i > 0:
+            neural_ouput[i] = neural_output[i] * 0.1 * d * hidden_value[i-1]
+        else:
+            neural_output[i] = neural_output[i] * 0.1 * d * 1
 	#hidden nodes: err is output * weight: neural2[i] * neural[i][j]
-	for i in range(len(neural)):
-		for j in range(len(neural[0])):
-			d2 = neural2[i+1] * d
-			if j > 0:
-				neural[i][j] = neural[i][j] + a * d2 * n_input[j-1]
-				#neural[i][j] = neural[i][j] + a * neural[i][j] * error * neural2[i+1] * (1 - neural2[i+1]) * n_input[j-1]
-			else: 
-				neural[i][j] = neural[i][j] + a * d2 * 1
-				#neural[i][j] = neural[i][j] + a * neural[i][j] * error * neural2[1+1] * (1 - neural2[i+1]) * 1
-	return error
+    for i in range(len(neural)):
+        for j in range(len(neural[0])):
+            d2 = neural_output[i+1] * d
+            if j > 0:
+                neural[i][j] = neural[i][j] * 0.1 * d2 * mapping[j-1]
+            else:
+                neural[i][j] = neural[i][j] * 0.1 * d2 * 1
+    return error
 
 def flashback():
     for a in range(len(memory)): #for every memory
         i = memory[random.randint(0, a)] #take a random memory and remove it from memory
         memory.remove(i)
         learn(run_neural(i), utility(i), i) #learn based on memory
+    #at the end of the flashback save value to file
     pass
 
 def bestMove(nodes): #find best move in a given list of nodes
-    best_utility = -1 #intitialize at the move that takes 999 moves to win wweeww
+    best_utility = -1 #intitialize at the move that takes 999 moves to win
     best_move = None
 
     for node in nodes:
@@ -157,11 +185,12 @@ def bestMove(nodes): #find best move in a given list of nodes
         #if (utility > best_utility): # rank their utility and take the best
         #    best_utility = utility
         #    best_move = move
-        if (utility > best_utility): #rank the number of moves to reach goal from moves and take the smallest wweeww
+        if (utility > best_utility): #rank the number of moves to reach goal from moves and take the smallest
             best_utility = utility
             best_move = node
 
     return best_move
+
 
 class AIPlayer(Player):
 
@@ -244,6 +273,11 @@ class AIPlayer(Player):
 
 
     def getMove(self, currentState):
+    #HW5 add current state to memory, to be flashback after game ends
+        global memory
+        memory.append(currentState)
+
+
 #        legal_moves = listAllLegalMoves(currentState)
 #        node_list = []
 #        for i in legal_moves:
