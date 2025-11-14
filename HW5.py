@@ -88,18 +88,27 @@ def utility(state): #to be done later along with the unit tests
     else:
         soldier_part = 0
     ret = (worker_part + soldier_part)
+    if ret < 0.1: ret = 0.1
     ret = ret ** 0.2
     return 1.0 / (1.0 + math.exp(-ret))
 
-node_num = 10 #number of nodes
-neural = [] #weights for hidden nodes
+node_num = 10 #number of nodes, number of inputs for output nodes
+inputs = 11 #number of inputs for hidden nodes
+neural = [] #weights for hidden nodes, list of lists
 neural_output = [] #weights for output node
 deltas = [] #delta values for hidden nodes
-hidden_values = [] #values of the hidden node, to be multiplied by neural_output
+hidden_values = [] #values of the hidden node, to be multiplied by neural_output: inputs for output node
 memory = []
 
 def initialize_nodes():
-    pass
+    for i in range(node_num):
+        arr = []
+        for j in range(inputs + 1): #inputs plus bias
+            arr.append(random.random() * 2.0 - 1.0)
+        neural.append(arr)
+        
+    for i in range(node_num + 1): #inputs plus bias for output
+        neural_output.append(random.random() * 2.0 - 1.0)
 
 def run_neural(state):
     mapping = return_map(state)
@@ -124,28 +133,38 @@ def inputval(state, int_input):
         case 0: #worker num == 1
             if (len(getAntList(state, state.whoseTurn, (WORKER,))) == 1): return 1
             else: return 0
-        case 1: #worker carry == true
-            pass
+        case 1: #worker carrying
+            if (len(getAntList(state, state.whoseTurn, (WORKER,))) == 1 and getAntList(state, state.whoseTurn, (WORKER,))[0].carrying): return 1
+            else: return 0
         case 2: #food amount
             return state.inventories[state.whoseTurn].foodCount
         case 3: #queen coords == anthill
-            if (getAntList(state, state.whoseTurn, (QUEEN,))[0] == getConstrList(state, state.whoseTurn, (ANTHILL,))[0]): return 1
+            if (getAntList(state, state.whoseTurn, (QUEEN,))[0].coords == getConstrList(state, state.whoseTurn, (ANTHILL,))[0].coords): return 1
             else: return 0
         case 4: #distance from worker to food if worker exists
-            pass
+            if (len(getAntList(state, state.whoseTurn, (WORKER,))) == 1):
+                return stepsToReach(state, getAntList(state, state.whoseTurn, (WORKER,))[0].coords, getCurrPlayerFood(state.whoseTurn, state)[0].coords)
+            else: return 1
         case 5: #distance from worker to tunnel if worker exists
-            pass
+            if (len(getAntList(state, state.whoseTurn, (WORKER,))) == 1):
+                return stepsToReach(state, getAntList(state, state.whoseTurn, (WORKER,))[0].coords, getConstrList(state, state.whoseTurn, (TUNNEL,))[0].coords)
+            else: return 1
         case 6: #ranged soldier == 1
-            pass
+            if (len(getAntList(state, state.whoseTurn, (R_SOLDIER,))) == 1): return 1
+            else: return 0
         case 7: #distance from ranged soldier to enemy worker if both exist
-            pass
+            if (len(getAntList(state, state.whoseTurn, (R_SOLDIER,))) == 1) and (len(getAntList(state, 1 - state.whoseTurn, (WORKER,))) == 1):
+                return stepsToReach(state, getAntList(state, state.whoseTurn, (R_SOLDIER,))[0].coords, getAntList(state, 1 - state.whoseTurn, (WORKER,))[0].coords)
+            else: return 1
         case 8: #distance from ranged soldier to enemy queen if both exist
-            pass
+            if (len(getAntList(state, state.whoseTurn, (R_SOLDIER,))) == 1) and (len(getAntList(state, 1 - state.whoseTurn, (QUEEN,))) == 1):
+                return stepsToReach(state, getAntList(state, state.whoseTurn, (R_SOLDIER,))[0].coords, getAntList(state, 1 - state.whoseTurn, (QUEEN,))[0].coords)
+            else: return 1
         case 9: #health of enemy queen
-            pass
+            return getAntList(state, 1 - state.whoseTurn, (QUEEN,))[0].health
         case 10: #number of enemy workers
-            pass
-    pass
+            return len(getAntList(state, 1 - state.whoseTurn, (WORKER,)))
+    return 0
 
 def learn(actual, expected, state):
     error = expected - actual
@@ -164,13 +183,19 @@ def learn(actual, expected, state):
                 neural[i][j] = neural[i][j] * 0.1 * d2 * mapping[j-1]
             else:
                 neural[i][j] = neural[i][j] * 0.1 * d2 * 1
-    return error
+    return str(error)
 
 def flashback():
+    print(str(len(memory)))
     for a in range(len(memory)): #for every memory
-        i = memory[random.randint(0, a)] #take a random memory and remove it from memory
-        memory.remove(i)
-        learn(run_neural(i), utility(i), i) #learn based on memory
+        if len(memory) > 1:
+            i = memory[random.randint(0, len(memory) - 1)] #take a random memory and remove it from memory
+            memory.remove(i)
+            print(learn(run_neural(i), utility(i), i)) #learn based on memory
+            
+        else:
+            learn(run_neural(memory[0]), utility(memory[0]), memory[0])
+            pass
     #at the end of the flashback save value to file
     pass
 
@@ -181,7 +206,7 @@ def bestMove(nodes): #find best move in a given list of nodes
     for node in nodes:
         utility = node["evaluation"]
         move = node["move"]
-        print(utility)
+        #print(utility)
         #if (utility > best_utility): # rank their utility and take the best
         #    best_utility = utility
         #    best_move = move
@@ -319,7 +344,7 @@ class AIPlayer(Player):
         #    node_list.append(node)
 
         #return bestMove(node_list)["move"]
-        print(best_frontier_new["evaluation"])
+        #print(best_frontier_new["evaluation"])
         return best_frontier_new["move"]
 
     ##
@@ -341,5 +366,6 @@ class AIPlayer(Player):
     # This agent doens't learn
     #
     def registerWin(self, hasWon):
+        flashback()
         #method templaste, not implemented
         pass
